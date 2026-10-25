@@ -67,6 +67,7 @@ class S1Tui(App[None]):
         self.current_posts = []
         self.image_preview = False
         self.image_cache: dict[str, Pixels | None] = {}
+        self.image_task: asyncio.Task[None] | None = None
         self.max_previews_per_page = 8
 
     def compose(self) -> ComposeResult:
@@ -89,6 +90,8 @@ class S1Tui(App[None]):
         await self.load_forums()
 
     async def on_unmount(self) -> None:
+        if self.image_task and not self.image_task.done():
+            self.image_task.cancel()
         await self.client.close()
 
     def status(self, message: str) -> None:
@@ -182,6 +185,7 @@ class S1Tui(App[None]):
     async def render_posts(self, title: str = "") -> None:
         parts = []
         image_count = 0
+        pending: list[str] = []
         for post in self.current_posts:
             parts.append(Text(f"── {post.floor} · {post.author} ──\n", style="bold cyan"))
             chunks = re.split(r"(\[\[S1TUI_IMAGE_\d+\]\])", post.content)
@@ -196,14 +200,10 @@ class S1Tui(App[None]):
                 image_count += 1
                 if self.image_preview and url and image_count <= self.max_previews_per_page:
                     if url not in self.image_cache:
-                        try:
-                            data = await self.client.image(url)
-                            pixels = await asyncio.to_thread(self._pixels_from_bytes, data)
-                            if len(self.image_cache) >= 32:
-                                self.image_cache.clear()
-                            self.image_cache[url] = pixels
-                        except Exception:
-                            self.image_cache[url] = None
+                        if url not in pending:
+                            pending.append(url)
+                        parts.append(Text(f"\n[{alt} · 加载中…]\n", style="dim"))
+                        continue
                     rendered = self.image_cache[url]
                     if rendered is not None:
                         parts.extend([Text(f"\n[{alt}]\n", style="dim"), rendered, Text("\n")])
@@ -220,6 +220,37 @@ class S1Tui(App[None]):
             f"{len(self.current_posts)} 条回复 · 第 {self.page}/{self.total_pages} 页 · "
             f"{image_count} 张图 · 图片预览{'开' if self.image_preview else '关'} · 按 i 切换"
         )
+        if pending:
+            self.prefetch_images(pending)
+
+    def prefetch_images(self, urls: list[str]) -> None:
+        """Download previews in the background so the UI stays responsive."""
+        if self.image_task and not self.image_task.done():
+            self.image_task.cancel()
+        self.image_task = asyncio.create_task(self._load_images(urls))
+
+    async def _load_images(self, urls: list[str]) -> None:
+        # Download concurrently; convert at most two images at a time so decoding
+        # large photos cannot exhaust memory on low-RAM machines.
+        semaphore = asyncio.Semaphore(2)
+
+        async def fetch_one(url: str) -> tuple[str, Pixels | None]:
+            try:
+                data = await self.client.image(url)
+                async with semaphore:
+                    return url, await asyncio.to_thread(self._pixels_from_bytes, data)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return url, None
+
+        results = await asyncio.gather(*(fetch_one(url) for url in urls))
+        for url, pixels in results:
+            if len(self.image_cache) >= 32:
+                self.image_cache.clear()
+            self.image_cache[url] = pixels
+        if self.image_preview and self.mode == "posts":
+            await self.render_posts()
 
     @staticmethod
     def _pixels_from_bytes(data: bytes) -> Pixels:
@@ -258,8 +289,18 @@ class S1Tui(App[None]):
         else:
             self.query_one("#forums", ListView).focus()
 
-    def action_switch_pane(self) -> None:
-        if self.mode != "threads" or self.query_one("#page-input", Input).styles.display != "none":
+    async def action_switch_pane(self) -> None:
+        if self.page_input_open():
+            return
+        if self.mode == "posts":
+            # 阅读界面：切回主题列表
+            self.mode = "threads"
+            self.selected_thread = None
+            self.query_one("#detail-content", Static).update("")
+            self.page = self.thread_page
+            await self.load_threads()
+            return
+        if self.mode != "threads":
             return
         forums = self.query_one("#forums", ListView)
         topics = self.query_one("#items", ListView)
@@ -389,6 +430,8 @@ class S1Tui(App[None]):
         if self.mode != "posts":
             return
         self.image_preview = not self.image_preview
+        if not self.image_preview and self.image_task and not self.image_task.done():
+            self.image_task.cancel()
         self.status("正在加载图片预览…" if self.image_preview else "已关闭图片预览")
         await self.render_posts()
 
