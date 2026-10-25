@@ -1,6 +1,6 @@
-# S1 Forum TUI
+# Stage1stForumTUI
 
-S1 论坛的非官方只读终端浏览器，基于 Python + Textual。
+Stage1st 论坛的非官方只读终端浏览器，基于 Python + Textual。
 
 ## 项目声明
 
@@ -18,7 +18,7 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m s1tui
 ```
 
-已有 `.venv` 并安装过依赖时，只需运行最后一行。也可以先执行 `.\.venv\Scripts\Activate.ps1`，然后运行 `python -m s1tui` 或 `s1-forum-tui`。旧命令 `s1tui` 仍可使用。未激活虚拟环境时，`py -m s1tui` 使用系统 Python，可能因缺少依赖而报错。
+已有 `.venv` 并安装过依赖时，只需运行最后一行。也可以先执行 `.\.venv\Scripts\Activate.ps1`，然后运行 `python -m s1tui` 或 `stage1st-forum-tui`。旧命令 `s1-forum-tui` 和 `s1tui` 仍可使用。未激活虚拟环境时，`py -m s1tui` 使用系统 Python，可能因缺少依赖而报错。
 
 ## 操作
 

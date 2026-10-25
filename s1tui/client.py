@@ -14,7 +14,7 @@ from .parser import Forum, Post, Thread, parse_forums, parse_posts, parse_thread
 class ForumClient:
     def __init__(self) -> None:
         self.http = httpx.AsyncClient(
-            headers={"User-Agent": "S1ForumTUI/0.1 (unofficial read-only forum client)"},
+            headers={"User-Agent": "Stage1stForumTUI/0.1 (unofficial read-only forum client)"},
             follow_redirects=True,
             timeout=20.0,
         )

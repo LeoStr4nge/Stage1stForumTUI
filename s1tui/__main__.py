@@ -27,7 +27,7 @@ class Entry(ListItem):
 class S1Tui(App[None]):
     """Read-only Stage1st browser. Enter drills in, Backspace returns."""
 
-    TITLE = "S1 Forum TUI · 非官方只读浏览器"
+    TITLE = "Stage1stForumTUI · 非官方只读浏览器"
     CSS = """
     Screen { layout: vertical; }
     #body { height: 1fr; }
