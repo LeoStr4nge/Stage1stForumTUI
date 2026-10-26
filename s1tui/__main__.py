@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from contextlib import suppress
 from io import BytesIO
 
 from PIL import Image, ImageOps
@@ -90,9 +91,17 @@ class S1Tui(App[None]):
         await self.load_forums()
 
     async def on_unmount(self) -> None:
+        task = self.image_task
+        self.cancel_image_task()
+        if task:
+            with suppress(asyncio.CancelledError):
+                await task
+        await self.client.close()
+
+    def cancel_image_task(self) -> None:
         if self.image_task and not self.image_task.done():
             self.image_task.cancel()
-        await self.client.close()
+        self.image_task = None
 
     def status(self, message: str) -> None:
         self.query_one("#status", Static).update(message)
@@ -113,6 +122,7 @@ class S1Tui(App[None]):
             self.status(f"连接失败：{exc}")
 
     async def show_forum(self, forum: Forum) -> None:
+        self.cancel_image_task()
         self.mode, self.selected_forum, self.page = "threads", forum, 1
         self.total_pages = 1
         await self.load_threads()
@@ -163,6 +173,7 @@ class S1Tui(App[None]):
             if target > total:
                 self.status(f"页码超出范围：共 {total} 页")
                 return False
+            self.cancel_image_task()
             self.page, self.total_pages = target, total
             self.query_one("#main-heading", Static).update(
                 f"{title} · 第 {self.page}/{self.total_pages} 页"
@@ -225,19 +236,17 @@ class S1Tui(App[None]):
 
     def prefetch_images(self, urls: list[str]) -> None:
         """Download previews in the background so the UI stays responsive."""
-        if self.image_task and not self.image_task.done():
-            self.image_task.cancel()
+        self.cancel_image_task()
         self.image_task = asyncio.create_task(self._load_images(urls))
 
     async def _load_images(self, urls: list[str]) -> None:
-        # Download concurrently; convert at most two images at a time so decoding
-        # large photos cannot exhaust memory on low-RAM machines.
+        # Limit downloads and decoding together to bound memory use.
         semaphore = asyncio.Semaphore(2)
 
         async def fetch_one(url: str) -> tuple[str, Pixels | None]:
             try:
-                data = await self.client.image(url)
                 async with semaphore:
+                    data = await self.client.image(url)
                     return url, await asyncio.to_thread(self._pixels_from_bytes, data)
             except asyncio.CancelledError:
                 raise
@@ -245,9 +254,9 @@ class S1Tui(App[None]):
                 return url, None
 
         results = await asyncio.gather(*(fetch_one(url) for url in urls))
+        if len(self.image_cache) + len(results) > 32:
+            self.image_cache.clear()
         for url, pixels in results:
-            if len(self.image_cache) >= 32:
-                self.image_cache.clear()
             self.image_cache[url] = pixels
         if self.image_preview and self.mode == "posts":
             await self.render_posts()
@@ -281,6 +290,7 @@ class S1Tui(App[None]):
             self.status("已取消跳页")
             return
         if self.mode == "posts":
+            self.cancel_image_task()
             self.mode = "threads"
             self.selected_thread = None
             self.query_one("#detail-content", Static).update("")
@@ -294,6 +304,7 @@ class S1Tui(App[None]):
             return
         if self.mode == "posts":
             # 阅读界面：切回主题列表
+            self.cancel_image_task()
             self.mode = "threads"
             self.selected_thread = None
             self.query_one("#detail-content", Static).update("")
@@ -430,8 +441,8 @@ class S1Tui(App[None]):
         if self.mode != "posts":
             return
         self.image_preview = not self.image_preview
-        if not self.image_preview and self.image_task and not self.image_task.done():
-            self.image_task.cancel()
+        if not self.image_preview:
+            self.cancel_image_task()
         self.status("正在加载图片预览…" if self.image_preview else "已关闭图片预览")
         await self.render_posts()
 
