@@ -13,10 +13,12 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, ListItem, ListView, Static
 
 from .client import ForumClient
 from .parser import Forum, Thread
+from .session import clear_session, load_session, save_session
 
 
 class Entry(ListItem):
@@ -25,10 +27,44 @@ class Entry(ListItem):
         self.value = value
 
 
-class S1Tui(App[None]):
-    """Read-only Stage1st browser. Enter drills in, Backspace returns."""
+class HelpScreen(ModalScreen[None]):
+    CSS = """
+    HelpScreen { align: center middle; background: $background 75%; }
+    #help-panel { width: 76; max-width: 95%; height: auto; max-height: 85%;
+                  border: round $accent; background: $surface; padding: 1 2; }
+    """
+    BINDINGS = [Binding("escape,question_mark", "close_help", show=False, priority=True)]
 
-    TITLE = "Stage1stForumTUI · 非官方只读浏览器"
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="help-panel"):
+            yield Static(
+                "快捷键（按 ? 或 Esc 关闭）\n\n"
+                "浏览\n"
+                "  Enter       打开选中的版面或主题\n"
+                "  Tab         切换版面/主题焦点；阅读帖子时返回主题列表\n"
+                "  ↑ / ↓       向上/向下选择；阅读时滚动帖子\n"
+                "  ← / →       上一页/下一页\n"
+                "  g / G       列表首项/末项；帖子页顶部/底部\n"
+                "  p           输入页码跳转\n"
+                "  i           切换图片预览\n"
+                "  r           刷新当前页面\n"
+                "  o           在系统浏览器打开当前帖子\n"
+                "  Vim 键位    h / j / k / l 对应 ← / ↓ / ↑ / →\n\n"
+                "账号与程序\n"
+                "  Shift+L     登录 Stage1st\n"
+                "  Shift+X     清除本机登录会话\n"
+                "  Esc / 退格  返回；输入时取消\n"
+                "  q           退出程序"
+            )
+
+    def action_close_help(self) -> None:
+        self.dismiss()
+
+
+class S1Tui(App[None]):
+    """Stage1st browser with account login and daily check-in."""
+
+    TITLE = "Stage1stForumTUI · 非官方论坛浏览器"
     CSS = """
     Screen { layout: vertical; }
     #body { height: 1fr; }
@@ -39,20 +75,32 @@ class S1Tui(App[None]):
     #detail-scroll { height: 1fr; overflow-y: scroll; scrollbar-size-vertical: 1; }
     #detail-content { width: 100%; height: auto; padding: 1 2; }
     #page-input { display: none; }
-    #status { height: 1; dock: bottom; padding-left: 1; color: $text-muted; }
+    #login-box { display: none; height: auto; border: round $accent; padding: 0 1; }
+    #status-bar { height: 1; }
+    #account-status { width: auto; padding-left: 1; }
+    #status { width: 1fr; padding-left: 2; color: $text-muted; }
     """
-    BINDINGS = [("q", "quit", "退出"), ("backspace,escape", "back", "返回"),
-                ("r", "refresh", "刷新"), ("l", "next_page", "下一页"),
-                ("h", "prev_page", "上一页"), ("j", "cursor_down", "向下"),
-                ("k", "cursor_up", "向上"), ("i", "toggle_images", "图片预览"),
+    BINDINGS = [("q", "quit", "退出"),
+                Binding("backspace", "back", show=False),
+                ("escape", "back", "返回"),
+                Binding("r", "refresh", "刷新", show=False),
+                Binding("l", "next_page", "下一页", show=False),
+                Binding("h", "prev_page", "上一页", show=False),
+                Binding("j", "cursor_down", "向下", show=False),
+                Binding("k", "cursor_up", "向上", show=False),
+                Binding("i", "toggle_images", "图片预览", show=False),
                 Binding("left", "arrow_left", show=False, priority=True),
                 Binding("down", "arrow_down", show=False, priority=True),
                 Binding("up", "arrow_up", show=False, priority=True),
                 Binding("right", "arrow_right", show=False, priority=True),
-                ("g", "jump_start", "页首"), ("G", "jump_end", "页尾"),
-                ("p", "page_input", "跳到页码"),
+                Binding("g", "jump_start", "页首", show=False),
+                Binding("G", "jump_end", "页尾", show=False),
+                Binding("p", "page_input", "跳到页码", show=False),
+                Binding("L", "login", "登录", show=False),
+                Binding("X", "logout", "退出账号", show=False),
                 Binding("tab", "switch_pane", "切换栏", priority=True),
-                ("o", "open_web", "浏览器打开")]
+                Binding("o", "open_web", "浏览器打开", show=False),
+                Binding("question_mark", "show_help", "快捷键", key_display="?")]
 
     def __init__(self) -> None:
         super().__init__()
@@ -70,6 +118,9 @@ class S1Tui(App[None]):
         self.image_cache: dict[str, Pixels | None] = {}
         self.image_task: asyncio.Task[None] | None = None
         self.max_previews_per_page = 8
+        self.account_name: str | None = None
+        self.session_saved = False
+        self.logging_in = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -84,11 +135,23 @@ class S1Tui(App[None]):
                     yield Static("", id="detail-content")
                 yield Input(placeholder="输入页码，Enter 跳转，Esc 取消", type="integer",
                             restrict=r"[0-9]*", id="page-input")
-        yield Static("连接中…", id="status")
+                with Vertical(id="login-box"):
+                    yield Static("登录 Stage1st：输入用户名、密码后按 Enter")
+                    yield Input(placeholder="用户名", id="login-username")
+                    yield Input(placeholder="密码", password=True, id="login-password")
+        with Horizontal(id="status-bar"):
+            yield Static("账号：未登录 · 签到：—", id="account-status")
+            yield Static("连接中…", id="status")
         yield Footer()
 
     async def on_mount(self) -> None:
+        try:
+            self.session_saved = await asyncio.to_thread(load_session, self.client.http.cookies)
+        except Exception:
+            self.status("系统凭据库不可用，登录后会话可能无法保存")
         await self.load_forums()
+        if self.session_saved:
+            await self.refresh_account()
 
     async def on_unmount(self) -> None:
         task = self.image_task
@@ -106,6 +169,112 @@ class S1Tui(App[None]):
     def status(self, message: str) -> None:
         self.query_one("#status", Static).update(message)
 
+    def action_show_help(self) -> None:
+        if isinstance(self.screen, HelpScreen):
+            self.screen.dismiss()
+        else:
+            self.push_screen(HelpScreen())
+
+    def account_status(self, message: str) -> None:
+        self.query_one("#account-status", Static).update(message)
+
+    async def refresh_account(self) -> None:
+        self.account_status("账号：检查中 · 签到：待检查")
+        try:
+            account, html = await self.client.account_page()
+        except Exception as exc:
+            self.account_status("账号：状态未知 · 签到：未检查")
+            self.status(f"登录状态检查失败：{exc}")
+            return
+        self.account_name = account
+        if not account:
+            self.account_status("账号：未登录 · 签到：—")
+            if self.session_saved:
+                self.status("保存的论坛会话已失效，请按 L 重新登录")
+            return
+        self.account_status(f"账号：{account} · 签到：检查中")
+        try:
+            sign_state = await self.client.check_in(html)
+        except Exception as exc:
+            sign_state = "状态未知"
+            self.status(f"登录成功；签到检查失败：{exc}")
+        else:
+            self.status(f"登录成功：{account}")
+        suffix = " · 会话未保存" if not self.session_saved else ""
+        self.account_status(f"账号：{account} · 签到：{sign_state}{suffix}")
+
+    def login_box_open(self) -> bool:
+        return self.query_one("#login-box", Vertical).styles.display != "none"
+
+    def close_login_box(self) -> None:
+        self.query_one("#login-box", Vertical).styles.display = "none"
+        self.query_one("#login-password", Input).value = ""
+        if self.mode == "threads":
+            self.query_one("#items", ListView).focus()
+
+    def action_login(self) -> None:
+        if self.logging_in:
+            return
+        if self.account_name:
+            self.status("已登录；如需切换账号，请先按 X 退出账号")
+            return
+        self.query_one("#page-input", Input).styles.display = "none"
+        self.query_one("#login-box", Vertical).styles.display = "block"
+        self.query_one("#login-username", Input).focus()
+
+    @on(Input.Submitted, "#login-username")
+    def login_username_submitted(self, event: Input.Submitted) -> None:
+        self.query_one("#login-password", Input).focus()
+
+    @on(Input.Submitted, "#login-password")
+    async def login_password_submitted(self, event: Input.Submitted) -> None:
+        if self.logging_in:
+            return
+        username = self.query_one("#login-username", Input).value.strip()
+        password_input = self.query_one("#login-password", Input)
+        password = password_input.value
+        password_input.value = ""
+        if not username or not password:
+            self.status("请输入用户名和密码")
+            return
+        self.logging_in = True
+        self.account_status("账号：登录中 · 签到：待检查")
+        try:
+            account, message = await self.client.login(username, password)
+            if not account:
+                self.account_status("账号：未登录 · 签到：—")
+                self.status(message)
+                return
+            self.account_name = account
+            try:
+                await asyncio.to_thread(save_session, self.client.http.cookies)
+                self.session_saved = True
+            except Exception:
+                self.session_saved = False
+                self.status("已登录，但系统凭据库不可用；退出后需要重新登录")
+            self.close_login_box()
+            self.status(f"登录成功：{account} · 正在检查签到…")
+            await self.refresh_account()
+        except Exception as exc:
+            self.account_status("账号：未登录 · 签到：—")
+            self.status(f"登录失败：{exc}")
+        finally:
+            self.logging_in = False
+
+    async def action_logout(self) -> None:
+        if self.logging_in:
+            return
+        self.client.http.cookies.clear()
+        self.account_name = None
+        self.session_saved = False
+        self.close_login_box()
+        try:
+            await asyncio.to_thread(clear_session)
+            self.status("已清除本机登录会话")
+        except Exception as exc:
+            self.status(f"本机会话清除失败：{exc}")
+        self.account_status("账号：未登录 · 签到：—")
+
     async def load_forums(self) -> None:
         self.status("读取版面列表…")
         try:
@@ -114,7 +283,7 @@ class S1Tui(App[None]):
             listing.clear()
             for forum in self.forums:
                 await listing.append(Entry(forum.title, forum))
-            self.status(f"加载了 {len(self.forums)} 个版面 · 只读模式")
+            self.status(f"加载了 {len(self.forums)} 个版面")
             if self.forums:
                 listing.index = 0
                 await self.show_forum(self.forums[0])
@@ -282,6 +451,10 @@ class S1Tui(App[None]):
             await self.show_thread(value)
 
     async def action_back(self) -> None:
+        if self.login_box_open():
+            self.close_login_box()
+            self.status("已取消登录")
+            return
         page_input = self.query_one("#page-input", Input)
         if page_input.styles.display != "none":
             page_input.styles.display = "none"
@@ -300,7 +473,7 @@ class S1Tui(App[None]):
             self.query_one("#forums", ListView).focus()
 
     async def action_switch_pane(self) -> None:
-        if self.page_input_open():
+        if self.page_input_open() or self.login_box_open():
             return
         if self.mode == "posts":
             # 阅读界面：切回主题列表
