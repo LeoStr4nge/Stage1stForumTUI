@@ -48,6 +48,67 @@ class ForumClient:
         html = await self._get(url)
         return parse_posts(html, url)
 
+    async def reply(self, thread: Thread, message: str) -> None:
+        """Submit plain text through this thread's current fast-reply form."""
+        if not message.strip():
+            raise ValueError("回复内容不能为空")
+        thread_url = urlsplit(thread.url)
+        thread_match = re.fullmatch(r"/2b/thread-(\d+)-\d+-\d+\.html", thread_url.path)
+        if (thread_url.scheme != "https" or thread_url.hostname != "stage1st.com" or
+                not thread_match):
+            raise ValueError("帖子地址异常")
+        thread_id = thread_match.group(1)
+
+        page = await self.http.get(thread.url)
+        page.raise_for_status()
+        form = BeautifulSoup(page.text, "html.parser").select_one("#fastpostform")
+        if form is None or form.get("method", "").lower() != "post":
+            raise ValueError("当前帖子没有可用的回帖表单")
+        if form.select_one("[name='seccodeverify'], [name='secanswer'], .seccheck"):
+            raise ValueError("论坛要求验证码或安全提问，请在网页中回帖")
+        if form.select_one("textarea[name='message']") is None:
+            raise ValueError("回帖表单缺少正文输入框")
+        action = urljoin(BASE, form.get("action", ""))
+        parsed = urlsplit(action)
+        params = dict(parse_qsl(parsed.query))
+        if (parsed.scheme != "https" or parsed.hostname != "stage1st.com" or
+                parsed.path != "/2b/forum.php" or params.get("mod") != "post" or
+                params.get("action") != "reply" or params.get("tid") != thread_id or
+                not params.get("fid", "").isdigit() or params.get("replysubmit") != "yes"):
+            raise ValueError("回帖表单地址异常")
+        formhash = form.select_one("input[name='formhash'][value]")
+        if formhash is None or not formhash.get("value"):
+            raise ValueError("回帖表单缺少 formhash")
+        payload = {"formhash": formhash["value"], "message": message}
+        for field in ("posttime", "usesig", "subject"):
+            node = form.select_one(f"input[name='{field}']")
+            if node is not None:
+                payload[field] = node.get("value", "")
+        submit = form.select_one("[name='replysubmit']")
+        if submit is not None:
+            payload["replysubmit"] = submit.get("value", "replysubmit")
+        response = await self.http.post(action, data=payload, headers={"Referer": thread.url},
+                                        follow_redirects=False)
+        response.raise_for_status()
+        result = BeautifulSoup(response.text, "html.parser")
+        notice = result.select_one("#messagetext p, .alert_error, .alert_info")
+        result_text = (notice or result).get_text(" ", strip=True)
+        if re.search(r"回复发布成功|回复成功|发表回复成功|回帖成功", result_text):
+            return
+        if response.is_redirect:
+            redirect = urlsplit(urljoin(action, response.headers.get("location", "")))
+            redirect_params = dict(parse_qsl(redirect.query))
+            same_thread = (
+                re.fullmatch(rf"/2b/thread-{thread_id}-\d+-\d+\.html", redirect.path) or
+                (redirect.path == "/2b/forum.php" and
+                 (redirect_params.get("tid") == thread_id or
+                  redirect_params.get("ptid") == thread_id))
+            )
+            if redirect.scheme == "https" and redirect.hostname == "stage1st.com" and same_thread:
+                return
+        detail = re.sub(r"\s+", " ", result_text)[:120] or "论坛未确认提交结果"
+        raise ValueError(f"回帖未确认：{detail}")
+
     async def account_page(self) -> tuple[str | None, str]:
         html = await self._get(BASE)
         soup = BeautifulSoup(html, "html.parser")

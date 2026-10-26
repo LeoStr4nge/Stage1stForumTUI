@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, ListItem, ListView, Static
+from textual.widgets import Button, Footer, Header, Input, ListItem, ListView, Static, TextArea
 
 from .client import ForumClient
 from .parser import Forum, Thread
@@ -41,7 +41,7 @@ class HelpScreen(ModalScreen[None]):
                 "快捷键（按 ? 或 Esc 关闭）\n\n"
                 "浏览\n"
                 "  Enter       打开选中的版面或主题\n"
-                "  Tab         切换版面/主题焦点；阅读帖子时返回主题列表\n"
+                "  Tab         切换版面/主题焦点；阅读帖子时转到版面栏\n"
                 "  ↑ / ↓       向上/向下选择；阅读时滚动帖子\n"
                 "  ← / →       上一页/下一页\n"
                 "  g / G       列表首项/末项；帖子页顶部/底部\n"
@@ -49,6 +49,7 @@ class HelpScreen(ModalScreen[None]):
                 "  i           切换图片预览\n"
                 "  r           刷新当前页面\n"
                 "  o           在系统浏览器打开当前帖子\n"
+                "  Shift+R     阅读帖子时写纯文本回复\n"
                 "  Vim 键位    h / j / k / l 对应 ← / ↓ / ↑ / →\n\n"
                 "账号与程序\n"
                 "  Shift+L     登录 Stage1st\n"
@@ -59,6 +60,66 @@ class HelpScreen(ModalScreen[None]):
 
     def action_close_help(self) -> None:
         self.dismiss()
+
+
+class ReplyScreen(ModalScreen[None]):
+    CSS = """
+    ReplyScreen { align: center middle; background: $background 75%; }
+    #reply-panel { width: 80; max-width: 95%; height: 70%; max-height: 30;
+                   border: round $accent; background: $surface; padding: 1 2; }
+    #reply-editor { height: 1fr; margin: 1 0; }
+    #reply-feedback { height: auto; color: $warning; }
+    #reply-buttons { height: auto; align-horizontal: right; }
+    """
+    BINDINGS = [Binding("escape", "cancel_reply", show=False, priority=True)]
+
+    def __init__(self, thread: Thread) -> None:
+        super().__init__()
+        self.thread = thread
+        self.sending = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="reply-panel"):
+            yield Static(f"回复：{self.thread.title}\n仅支持纯文本。Tab 切换到按钮，Esc 取消。")
+            yield TextArea(id="reply-editor", placeholder="输入回复内容…")
+            yield Static("", id="reply-feedback")
+            with Horizontal(id="reply-buttons"):
+                yield Button("发送回复", variant="primary", id="reply-send")
+                yield Button("取消", id="reply-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#reply-editor", TextArea).focus()
+
+    def action_cancel_reply(self) -> None:
+        if not self.sending:
+            self.dismiss()
+
+    @on(Button.Pressed)
+    async def button_pressed(self, event: Button.Pressed) -> None:
+        if self.sending:
+            return
+        if event.button.id == "reply-cancel":
+            self.dismiss()
+            return
+        if event.button.id != "reply-send":
+            return
+        message = self.query_one("#reply-editor", TextArea).text.strip()
+        feedback = self.query_one("#reply-feedback", Static)
+        if not message:
+            feedback.update("请输入回复内容")
+            return
+        self.sending = True
+        event.button.disabled = True
+        feedback.update("正在提交回复…")
+        try:
+            await self.app.client.reply(self.thread, message)
+        except Exception as exc:
+            feedback.update(f"提交失败：{exc}")
+            event.button.disabled = False
+            self.sending = False
+            return
+        self.dismiss()
+        await self.app.reply_sent()
 
 
 class S1Tui(App[None]):
@@ -98,6 +159,7 @@ class S1Tui(App[None]):
                 Binding("p", "page_input", "跳到页码", show=False),
                 Binding("L", "login", "登录", show=False),
                 Binding("X", "logout", "退出账号", show=False),
+                Binding("R", "reply", "回帖", show=False),
                 Binding("tab", "switch_pane", "切换栏", priority=True),
                 Binding("o", "open_web", "浏览器打开", show=False),
                 Binding("question_mark", "show_help", "快捷键", key_display="?")]
@@ -174,6 +236,27 @@ class S1Tui(App[None]):
             self.screen.dismiss()
         else:
             self.push_screen(HelpScreen())
+
+    def action_reply(self) -> None:
+        if isinstance(self.screen, ReplyScreen):
+            return
+        if self.mode != "posts" or self.selected_thread is None:
+            self.status("请先打开要回复的帖子")
+            return
+        if not self.account_name:
+            self.status("请先按 L 登录，再回帖")
+            return
+        self.push_screen(ReplyScreen(self.selected_thread))
+
+    async def reply_sent(self) -> None:
+        old_last_page = self.total_pages
+        if not await self.load_posts(old_last_page):
+            self.status("回复已提交，但刷新帖子失败；可按 r 重试")
+            return
+        if self.total_pages > old_last_page and not await self.load_posts(self.total_pages):
+            self.status("回复已提交，但读取最新一页失败；可按 r 重试")
+            return
+        self.status("回复已提交 · 已刷新帖子末页")
 
     def account_status(self, message: str) -> None:
         self.query_one("#account-status", Static).update(message)
@@ -398,7 +481,7 @@ class S1Tui(App[None]):
         self.query_one("#detail-content", Static).update(Group(*parts))
         self.status(
             f"{len(self.current_posts)} 条回复 · 第 {self.page}/{self.total_pages} 页 · "
-            f"{image_count} 张图 · 图片预览{'开' if self.image_preview else '关'} · 按 i 切换"
+            f"{image_count} 张图 · 图片预览{'开' if self.image_preview else '关'} · R 回帖"
         )
         if pending:
             self.prefetch_images(pending)
@@ -473,16 +556,24 @@ class S1Tui(App[None]):
             self.query_one("#forums", ListView).focus()
 
     async def action_switch_pane(self) -> None:
+        if isinstance(self.screen, ReplyScreen):
+            if not self.screen.sending:
+                self.screen.focus_next()
+            return
+        if isinstance(self.screen, HelpScreen):
+            return
         if self.page_input_open() or self.login_box_open():
             return
         if self.mode == "posts":
-            # 阅读界面：切回主题列表
+            # 阅读界面：关闭帖子并将焦点移到版面栏。
             self.cancel_image_task()
             self.mode = "threads"
             self.selected_thread = None
             self.query_one("#detail-content", Static).update("")
             self.page = self.thread_page
-            await self.load_threads()
+            if await self.load_threads():
+                self.query_one("#forums", ListView).focus()
+                self.status("焦点：版面 · j/k 选择版面 · Enter 打开 · Tab 切换栏")
             return
         if self.mode != "threads":
             return
