@@ -264,7 +264,7 @@ class S1Tui(App[None]):
     async def refresh_account(self) -> None:
         self.account_status("账号：检查中 · 签到：待检查")
         try:
-            account, html = await self.client.account_page()
+            account, _ = await self.client.account_page()
         except Exception as exc:
             self.account_status("账号：状态未知 · 签到：未检查")
             self.status(f"登录状态检查失败：{exc}")
@@ -277,7 +277,7 @@ class S1Tui(App[None]):
             return
         self.account_status(f"账号：{account} · 签到：检查中")
         try:
-            sign_state = await self.client.check_in(html)
+            sign_state = await self.client.check_in()
         except Exception as exc:
             sign_state = "状态未知"
             self.status(f"登录成功；签到检查失败：{exc}")
