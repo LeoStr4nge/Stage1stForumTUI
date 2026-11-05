@@ -10,15 +10,19 @@ Stage1st 论坛的非官方终端浏览器，基于 Python + Textual。支持浏
 
 ## 运行
 
-需要 Python 3.10 或更新版本：
+需要 Python 3.10 或更新版本。在项目根目录执行：
 
 ```powershell
-py -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
-.\.venv\Scripts\python.exe -m s1tui
+.\.venv\Scripts\s1tui.exe
 ```
 
-已有 `.venv` 并安装过依赖时，只需运行最后一行。也可以先执行 `.\.venv\Scripts\Activate.ps1`，然后运行 `python -m s1tui` 或 `stage1st-forum-tui`。旧命令 `s1-forum-tui` 和 `s1tui` 仍可使用。未激活虚拟环境时，`py -m s1tui` 使用系统 Python，可能因缺少依赖而报错。
+已有 `.venv` 并安装过依赖时，只需运行最后一行。等价的写法是 `.\.venv\Scripts\python.exe -m s1tui`；也可以先执行 `.\.venv\Scripts\Activate.ps1`，然后运行 `python -m s1tui` 或 `stage1st-forum-tui`。旧命令 `s1-forum-tui` 和 `s1tui` 仍可使用。
+
+这里用 `python` 而非 `py`：部分环境（含通过 uv 或独立安装器装的 Python）没有 `py` 启动器，`py -m venv` 会直接报「找不到命令」。若 `python` 也不在 PATH 上，换成解释器的完整路径即可。同理，未激活虚拟环境时用系统 Python 跑 `python -m s1tui` 会因缺少依赖报错——务必指向 `.venv` 里的解释器。
+
+TUI 需要一个真正的终端窗口（Windows Terminal、VS Code 集成终端均可），在纯重定向输出的环境里启动没有意义。
 
 ## 操作
 
@@ -42,3 +46,23 @@ py -m venv .venv
 阅读帖子时，右侧内容区会占满可用高度并显示独立滚动条；`j` / `k` 每次滚动约三分之一屏。
 
 登录成功后仅将论坛会话 Cookie 保存在系统凭据库，不保存密码。下次启动时若会话仍有效，程序会检查新版 `muanyun_053` 签到页的今日记录，并在尚未签到时尝试自动签到；首次登录后也会执行一次检查。底部持续显示账号和签到状态；只有论坛明确返回成功或今日已签才显示对应状态。若登录后的页面没有签到入口，程序会显示“状态未知（未找到签到入口）”。纯文本回复会通过当前帖子页面的快速回帖表单提交；提交失败时编辑框保留草稿。若论坛要求验证码或安全提问，请在网页中操作。当前版本尚不支持发新帖或收藏。论坛访问策略、HTML 结构或网络限制变化时，登录、签到和回帖逻辑可能需要调整。
+
+## 常见问题
+
+**启动时报 `ImportError: cannot import name '_imaging' from 'PIL'`**
+
+`.venv` 的 `site-packages` 里混入了别的 Python 版本编译的 Pillow（扩展名形如 `_imaging.cp311-win_amd64.pyd`，与当前解释器版本不符）。按当前解释器重装一次即可：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --force-reinstall --no-cache-dir "Pillow>=10.0"
+```
+
+安装完成后 `.venv\Lib\site-packages\PIL\` 下的 `.pyd` 应带有与解释器一致的版本标记（例如 3.13 对应 `cp313`）。
+
+**`py` 或 `python` 提示找不到命令**
+
+`py` 启动器并非所有环境都有；`python` 也可能不在 PATH 上。先在终端执行 `python -V` 确认版本不低于 3.10，找不到就改用解释器的完整路径。
+
+**`ModuleNotFoundError: No module named 'textual'`（或 httpx、PIL 等）**
+
+用系统 Python 跑了程序，而不是 `.venv` 里的。改用 `.\.venv\Scripts\python.exe -m s1tui`，或先激活虚拟环境。
