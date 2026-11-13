@@ -22,3 +22,6 @@ dist/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local launcher scripts
+s1tui.cmd
