@@ -250,13 +250,32 @@ class ForumClient:
             ):
                 raise ValueError("图片地址解析到非公网网络")
 
+        # Signed attachments encode the viewing user's uid, so they must be
+        # fetched with the forum session (same-site, never external hosts).
+        # External image hosts keep the cookie-free client.
+        forum_attachment = (
+            (host == "stage1st.com" or host.endswith(".stage1st.com"))
+            and "mod=attachment" in url
+        )
+        headers = {"Referer": BASE} if forum_attachment else {}
+        client = self.http if forum_attachment else self.image_http
         chunks: list[bytes] = []
         size = 0
-        async with self.image_http.stream("GET", url, follow_redirects=False, timeout=8.0) as response:
+        async with client.stream("GET", url, headers=headers,
+                                 follow_redirects=False, timeout=8.0) as response:
+            if response.status_code == 403:
+                raise ValueError("图片被拒绝（403）：附件签名可能已过期，请按 r 刷新页面")
             response.raise_for_status()
-            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-            if content_type not in {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"}:
-                raise ValueError("链接返回的不是图片")
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            # The forum's attachment endpoint serves images as bare "image".
+            if not (content_type.startswith("image") or content_type == "application/octet-stream"):
+                preview = bytearray()
+                async for part in response.aiter_bytes():
+                    preview.extend(part)
+                    if len(preview) >= 256:
+                        break
+                snippet = " ".join(preview.decode("utf-8", "ignore").split())[:80]
+                raise ValueError(f"返回的不是图片（{content_type or '无类型'}）：{snippet}")
             declared = int(response.headers.get("content-length", "0") or 0)
             if declared > limit:
                 raise ValueError("图片超过 4 MiB 限制")

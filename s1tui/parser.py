@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import base64
 import re
 from dataclasses import dataclass
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin
 
 from bs4 import BeautifulSoup
 
@@ -81,8 +82,32 @@ def parse_threads(html: str) -> tuple[list[Thread], int]:
     return result, parse_total_pages(soup)
 
 
+def _attachment_links(soup: BeautifulSoup) -> dict[str, str]:
+    """Map Discuz attachment ids to their signed download URLs.
+
+    The CDN URL in an <img file=...> is rejected with 403 without the
+    signature that the forum embeds in the attachment link. Those links live
+    inside .aimg_tip, which parse_posts removes, so collect them up front.
+    """
+    links: dict[str, str] = {}
+    for anchor in soup.select("a[href*='mod=attachment']"):
+        match = re.search(r"[?&]aid=([^&]+)", anchor.get("href", ""))
+        if not match:
+            continue
+        encoded = unquote(match.group(1))
+        try:
+            encoded += "=" * (-len(encoded) % 4)
+            aid = base64.b64decode(encoded).decode("utf-8", "ignore").split("|", 1)[0]
+        except ValueError:
+            continue
+        if aid.isdigit():
+            links[aid] = anchor.get("href", "")
+    return links
+
+
 def parse_posts(html: str, page_url: str) -> tuple[str, list[Post], int]:
     soup = BeautifulSoup(html, "html.parser")
+    attachments = _attachment_links(soup)
     title_node = soup.select_one("#thread_subject")
     posts: list[Post] = []
     for node in soup.select("div[id^='post_']"):
@@ -96,9 +121,13 @@ def parse_posts(html: str, page_url: str) -> tuple[str, list[Post], int]:
         images: list[tuple[str | None, str]] = []
         for image in content.select("img"):
             alt = image.get("alt") or "图片"
-            source = (image.get("file") or image.get("zoomfile") or
-                      image.get("data-src") or image.get("src"))
-            source = urljoin(page_url, source) if source else None
+            signed = attachments.get(image.get("aid") or "")
+            if signed:
+                source = urljoin(page_url, signed)
+            else:
+                source = (image.get("file") or image.get("zoomfile") or
+                          image.get("data-src") or image.get("src"))
+                source = urljoin(page_url, source) if source else None
             if source and source.startswith("data:"):
                 source = None
             if source and "/image/smiley/" in source:

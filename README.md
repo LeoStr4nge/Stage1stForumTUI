@@ -47,11 +47,13 @@ TUI 需要一个真正的终端窗口（Windows Terminal、VS Code 集成终端�
 - `Shift+L`：登录；输入用户名并按 `Enter` 切到密码，输入密码后按 `Enter` 提交；`Esc` 取消
 - `Shift+X`：清除本机登录会话
 - `Shift+R`：阅读帖子时写纯文本回复；在编辑框按 `Tab` 切换到按钮并发送，`Esc` 取消
-- `i`：切换图片预览；默认只显示图片占位文字
+- `i`：切换图片预览（需要终端支持 Kitty graphics protocol）；不支持时按 `i` 会在底部提示
 - `Backspace` / `Esc`：返回
 - `r`：刷新，`o`：在系统浏览器打开当前帖子，`q`：退出
 
-图片预览开启后会把图片缩放成终端彩色字符；每张图片最多下载 4 MiB，每页最多预览 8 张，单张尺寸限制为 2000 万像素。若图片源不可达或格式不支持，会显示失败占位。需要终端支持真彩色以获得较好的效果。
+图片预览通过 [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) 的 Unicode placeholders 显示真实位图：图片数据只在首次渲染时传输一次，屏幕上用普通占位字符格承载，因此滚动、裁剪和刷新都由 Textual 正常处理。默认只显示占位文字，`i` 开启后每页最多预览 8 张；每张图片最多下载 4 MiB，单张尺寸限制为 2000 万像素。若图片源不可达或格式不支持，会显示失败占位。
+
+支持 Kitty Unicode placeholders 的终端包括 Kitty、Ghostty、WezTerm；macOS 自带的 Terminal.app、Alacritty 不支持，iTerm2 走的是 OSC 1337 内联图片而非占位符路径，因此本实现也不支持。在这些终端里按 `i` 会提示改用上述终端或按 `o` 在浏览器打开。tmux 默认判定为不支持（会丢弃图形转义序列），可用 `S1TUI_KITTY=1` 强制尝试，但需要 tmux 配置 `allow-passthrough` 且终端支持透传；`S1TUI_KITTY=0` 可强制关闭检测。
 
 阅读帖子时，右侧内容区会占满可用高度并显示独立滚动条；`j` / `k` 每次滚动约三分之一屏。
 

@@ -3,12 +3,9 @@ from __future__ import annotations
 import asyncio
 import re
 from contextlib import suppress
-from io import BytesIO
 
-from PIL import Image, ImageOps
 from rich.console import Group
 from rich.text import Text
-from rich_pixels import Pixels
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -17,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, ListItem, ListView, Static, TextArea
 
 from .client import ForumClient
+from .kitty import KittyImage, supported as kitty_supported, unsupported_hint
 from .parser import Forum, Thread
 from .session import clear_session, load_session, save_session
 
@@ -46,7 +44,7 @@ class HelpScreen(ModalScreen[None]):
                 "  ← / →       上一页/下一页\n"
                 "  g / G       列表首项/末项；帖子页顶部/底部\n"
                 "  p           输入页码跳转\n"
-                "  i           切换图片预览\n"
+                "  i           切换图片预览（需 Kitty 图形协议）\n"
                 "  r           刷新当前页面\n"
                 "  o           在系统浏览器打开当前帖子\n"
                 "  Shift+R     阅读帖子时写纯文本回复\n"
@@ -177,8 +175,11 @@ class S1Tui(App[None]):
         self.selected_thread: Thread | None = None
         self.current_posts = []
         self.image_preview = False
-        self.image_cache: dict[str, Pixels | None] = {}
+        self.image_cache: dict[str, KittyImage | None] = {}
+        self.image_errors: dict[str, str] = {}
         self.image_task: asyncio.Task[None] | None = None
+        # Probe before run() takes over the terminal, then keep the result fixed.
+        self.kitty_images = kitty_supported()
         self.max_previews_per_page = 8
         self.account_name: str | None = None
         self.session_saved = False
@@ -221,6 +222,10 @@ class S1Tui(App[None]):
         if task:
             with suppress(asyncio.CancelledError):
                 await task
+        for image in self.image_cache.values():
+            if image is not None:
+                image.cleanup()
+        self.image_cache.clear()
         await self.client.close()
 
     def cancel_image_task(self) -> None:
@@ -471,7 +476,8 @@ class S1Tui(App[None]):
                     if rendered is not None:
                         parts.extend([Text(f"\n[{alt}]\n", style="dim"), rendered, Text("\n")])
                     else:
-                        parts.append(Text(f"\n[图片预览失败：{alt}]\n", style="yellow"))
+                        reason = self.image_errors.get(url, "未知原因")
+                        parts.append(Text(f"\n[图片预览失败：{alt} · {reason[:100]}]\n", style="yellow"))
                 else:
                     note = "本页预览数量已达上限" if self.image_preview and url else alt
                     parts.append(Text(f"\n[图片：{note}]\n", style="dim"))
@@ -495,33 +501,31 @@ class S1Tui(App[None]):
         # Limit downloads and decoding together to bound memory use.
         semaphore = asyncio.Semaphore(2)
 
-        async def fetch_one(url: str) -> tuple[str, Pixels | None]:
+        async def fetch_one(url: str) -> tuple[str, KittyImage | None, str]:
             try:
                 async with semaphore:
                     data = await self.client.image(url)
-                    return url, await asyncio.to_thread(self._pixels_from_bytes, data)
+                    return url, await asyncio.to_thread(KittyImage, data), ""
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                return url, None
+            except Exception as exc:
+                return url, None, f"{type(exc).__name__}: {exc}"
 
         results = await asyncio.gather(*(fetch_one(url) for url in urls))
         if len(self.image_cache) + len(results) > 32:
+            for image in self.image_cache.values():
+                if image is not None:
+                    image.cleanup()
             self.image_cache.clear()
-        for url, pixels in results:
-            self.image_cache[url] = pixels
+            self.image_errors.clear()
+        for url, image, error in results:
+            self.image_cache[url] = image
+            if error:
+                self.image_errors[url] = error
+            else:
+                self.image_errors.pop(url, None)
         if self.image_preview and self.mode == "posts":
             await self.render_posts()
-
-    @staticmethod
-    def _pixels_from_bytes(data: bytes) -> Pixels:
-        with Image.open(BytesIO(data)) as source:
-            if source.width * source.height > 20_000_000:
-                raise ValueError("图片分辨率过大")
-            source.seek(0)
-            image = source.convert("RGB")
-            image = ImageOps.contain(image, (64, 40))
-            return Pixels.from_image(image)
 
     @on(ListView.Selected)
     async def selected(self, event: ListView.Selected) -> None:
@@ -703,6 +707,9 @@ class S1Tui(App[None]):
 
     async def action_toggle_images(self) -> None:
         if self.mode != "posts":
+            return
+        if not self.image_preview and not self.kitty_images:
+            self.status(unsupported_hint())
             return
         self.image_preview = not self.image_preview
         if not self.image_preview:
