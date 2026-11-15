@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import re
 import socket
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -14,22 +16,37 @@ from .constants import BASE
 from .parser import Forum, Post, Thread, parse_forums, parse_posts, parse_threads
 
 
+logger = logging.getLogger("s1tui.client")
+
+
 class ForumClient:
-    def __init__(self) -> None:
+    def __init__(self, *, trust_env: bool = True) -> None:
         headers = {"User-Agent": "Stage1stForumTUI/0.1 (unofficial forum client)"}
         self.http = httpx.AsyncClient(
             headers=headers,
             follow_redirects=True,
             timeout=20.0,
+            trust_env=trust_env,
         )
         # External image hosts must never receive the forum's login cookies.
-        self.image_http = httpx.AsyncClient(headers=headers, follow_redirects=False, timeout=8.0)
+        self.image_http = httpx.AsyncClient(
+            headers=headers, follow_redirects=False, timeout=8.0, trust_env=trust_env)
 
     async def _get(self, url: str) -> str:
-        response = await self.http.get(urljoin(BASE, url))
-        response.raise_for_status()
-        response.encoding = response.encoding or "utf-8"
-        return response.text
+        target = urljoin(BASE, url)
+        path = urlsplit(target).path
+        started = time.monotonic()
+        logger.info("GET started; path=%s", path)
+        try:
+            response = await self.http.get(target)
+            logger.info("GET completed; path=%s status=%d bytes=%d elapsed=%.2fs",
+                        path, response.status_code, len(response.content), time.monotonic() - started)
+            response.raise_for_status()
+            response.encoding = response.encoding or "utf-8"
+            return response.text
+        except Exception:
+            logger.exception("GET failed; path=%s elapsed=%.2fs", path, time.monotonic() - started)
+            raise
 
     async def forums(self) -> list[Forum]:
         return parse_forums(await self._get(BASE))

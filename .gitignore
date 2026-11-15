@@ -11,6 +11,7 @@ venv/
 .env
 .env.*
 !.env.example
+s1tui-debug.log
 
 # Build and package output
 build/

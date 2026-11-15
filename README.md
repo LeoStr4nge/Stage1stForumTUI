@@ -34,6 +34,10 @@ python3 -m venv .venv
 
 TUI 需要一个真正的终端窗口（Windows Terminal、VS Code 集成终端均可），在纯重定向输出的环境里启动没有意义。
 
+连接问题可用 `--debug` 启动，例如 `./.venv/bin/s1tui --debug`；Windows 在上方启动命令后追加 `--debug`。日志写入当前目录的 `s1tui-debug.log`；也可用 `--debug-log 路径` 指定文件。日志记录会话恢复、论坛请求的路径/状态/耗时、解析结果和异常，不记录密码、Cookie 或网页正文。复现后退出程序，查看或提供日志末尾的记录。
+
+如果日志显示请求经由 HTTP 代理，并在 TLS 握手时报 `httpx.ConnectError`，可用 `./.venv/bin/s1tui --debug --no-proxy` 尝试直连。`--no-proxy` 会忽略 HTTPX 使用的环境代理和 TLS 证书设置；若所在网络必须使用代理，应修复代理配置后再正常启动。
+
 ## 操作
 
 按 `?` 可在程序内查看完整快捷键。底部只显示常用操作提示。

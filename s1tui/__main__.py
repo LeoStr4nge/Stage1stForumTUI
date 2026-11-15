@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
+import logging
 import re
 from contextlib import suppress
+from pathlib import Path
+
+import httpx
 
 from rich.console import Group
 from rich.text import Text
@@ -17,6 +22,10 @@ from .client import ForumClient
 from .kitty import KittyImage, supported as kitty_supported, unsupported_hint
 from .parser import Forum, Thread
 from .session import clear_session, load_session, save_session
+
+
+logger = logging.getLogger("s1tui")
+logger.addHandler(logging.NullHandler())
 
 
 class Entry(ListItem):
@@ -162,9 +171,9 @@ class S1Tui(App[None]):
                 Binding("o", "open_web", "浏览器打开", show=False),
                 Binding("question_mark", "show_help", "快捷键", key_display="?")]
 
-    def __init__(self) -> None:
+    def __init__(self, *, trust_env: bool = True) -> None:
         super().__init__()
-        self.client = ForumClient()
+        self.client = ForumClient(trust_env=trust_env)
         self.forums: list[Forum] = []
         self.threads: list[Thread] = []
         self.page = 1
@@ -208,12 +217,19 @@ class S1Tui(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
+        logger.info("UI mounted; restoring saved session")
         try:
             self.session_saved = await asyncio.to_thread(load_session, self.client.http.cookies)
+            logger.info("Session restore finished; saved_session=%s", self.session_saved)
         except Exception:
+            logger.exception("Session restore failed")
             self.status("系统凭据库不可用，登录后会话可能无法保存")
-        await self.load_forums()
+        logger.info("Loading forum list")
+        if not await self.load_forums():
+            return
+        logger.info("Forum list load finished; count=%d", len(self.forums))
         if self.session_saved:
+            logger.info("Refreshing account state")
             await self.refresh_account()
 
     async def on_unmount(self) -> None:
@@ -363,10 +379,11 @@ class S1Tui(App[None]):
             self.status(f"本机会话清除失败：{exc}")
         self.account_status("账号：未登录 · 签到：—")
 
-    async def load_forums(self) -> None:
+    async def load_forums(self) -> bool:
         self.status("读取版面列表…")
         try:
             self.forums = await self.client.forums()
+            logger.info("Forum list parsed; count=%d", len(self.forums))
             listing = self.query_one("#forums", ListView)
             listing.clear()
             for forum in self.forums:
@@ -375,8 +392,15 @@ class S1Tui(App[None]):
             if self.forums:
                 listing.index = 0
                 await self.show_forum(self.forums[0])
+            return True
         except Exception as exc:
-            self.status(f"连接失败：{exc}")
+            logger.exception("Forum list load failed")
+            self.query_one("#main-heading", Static).update("连接论坛失败 · 按 r 重试")
+            if isinstance(exc, httpx.ConnectError):
+                self.status("连接失败：网络或代理握手异常；可检查代理，或用 --no-proxy 启动重试")
+            else:
+                self.status(f"连接失败：{exc}")
+            return False
 
     async def show_forum(self, forum: Forum) -> None:
         self.cancel_image_task()
@@ -724,7 +748,27 @@ class S1Tui(App[None]):
 
 
 def main() -> None:
-    S1Tui().run()
+    parser = argparse.ArgumentParser(description="Stage1st terminal browser")
+    parser.add_argument("--debug", action="store_true", help="write diagnostic logs to s1tui-debug.log")
+    parser.add_argument("--debug-log", type=Path, metavar="PATH",
+                        help="write diagnostic logs to PATH (also enables debug mode)")
+    parser.add_argument("--no-proxy", action="store_true",
+                        help="ignore HTTPX proxy and TLS settings from the environment")
+    args = parser.parse_args()
+    if args.debug or args.debug_log:
+        log_path = (args.debug_log or Path.cwd() / "s1tui-debug.log").expanduser().resolve()
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        logger.info("Debug logging started; file=%s", log_path)
+    try:
+        S1Tui(trust_env=not args.no_proxy).run()
+    except Exception:
+        logger.exception("Application stopped unexpectedly")
+        raise
 
 
 if __name__ == "__main__":

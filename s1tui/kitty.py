@@ -204,5 +204,5 @@ class KittyImage:
     def cleanup(self) -> None:
         """Free the image data held by the terminal."""
         if not self._closed:
-            _write(_message(a="d", I=self._image_id, q=2))
+            _write(_message(a="d", d="I", i=self._image_id, q=2))
             self._closed = True
