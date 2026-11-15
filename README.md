@@ -12,15 +12,25 @@ Stage1st 论坛的非官方终端浏览器，基于 Python + Textual。支持浏
 
 需要 Python 3.10 或更新版本。在项目根目录执行：
 
+Windows（PowerShell）：
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 .\.venv\Scripts\s1tui.exe
 ```
 
-已有 `.venv` 并安装过依赖时，只需运行最后一行。等价的写法是 `.\.venv\Scripts\python.exe -m s1tui`；也可以先执行 `.\.venv\Scripts\Activate.ps1`，然后运行 `python -m s1tui` 或 `stage1st-forum-tui`。旧命令 `s1-forum-tui` 和 `s1tui` 仍可使用。
+macOS / Linux（bash / zsh）：
 
-这里用 `python` 而非 `py`：部分环境（含通过 uv 或独立安装器装的 Python）没有 `py` 启动器，`py -m venv` 会直接报「找不到命令」。若 `python` 也不在 PATH 上，换成解释器的完整路径即可。同理，未激活虚拟环境时用系统 Python 跑 `python -m s1tui` 会因缺少依赖报错——务必指向 `.venv` 里的解释器。
+```bash
+python3 -m venv .venv
+./.venv/bin/python -m pip install -e .
+./.venv/bin/s1tui
+```
+
+已有 `.venv` 并安装过依赖时，只需运行最后一行；等价的写法分别是 `.\.venv\Scripts\python.exe -m s1tui` 和 `./.venv/bin/python -m s1tui`。也可以先激活虚拟环境：Windows 执行 `.\.venv\Scripts\Activate.ps1`，macOS / Linux 执行 `source .venv/bin/activate`，然后运行 `python -m s1tui` 或 `stage1st-forum-tui`。旧命令 `s1-forum-tui` 和 `s1tui` 仍可使用。
+
+这里用 `python` / `python3` 而非 `py`：部分环境（含通过 uv 或独立安装器装的 Python）没有 `py` 启动器，`py -m venv` 会直接报「找不到命令」。macOS 自带的 `/usr/bin/python3` 通常是 3.9，低于要求；请改用 3.10+ 的解释器创建虚拟环境，例如 `python3.12 -m venv .venv`（Homebrew）或 `uv venv --python 3.11 .venv`。若 `python` / `python3` 也不在 PATH 上，换成解释器的完整路径即可。同理，未激活虚拟环境时用系统 Python 跑 `python -m s1tui` 会因版本过低或缺少依赖报错——务必指向 `.venv` 里的解释器。
 
 TUI 需要一个真正的终端窗口（Windows Terminal、VS Code 集成终端均可），在纯重定向输出的环境里启动没有意义。
 
