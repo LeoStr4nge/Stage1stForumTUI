@@ -10,27 +10,25 @@ Stage1st 论坛的非官方终端浏览器，基于 Python + Textual。支持浏
 
 ## 运行
 
-需要 Python 3.10 或更新版本。在项目根目录执行：
+需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)。在项目根目录执行以下命令；uv 会选用 Python 3.11 创建 `.venv`，并把本项目及依赖安装到这个虚拟环境。无需激活环境。
 
 Windows（PowerShell）：
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
+uv venv --python 3.11 .venv
+uv pip install --python .venv\Scripts\python.exe -e .
 .\.venv\Scripts\s1tui.exe
 ```
 
 macOS / Linux（bash / zsh）：
 
 ```bash
-python3 -m venv .venv
-./.venv/bin/python -m pip install -e .
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -e .
 ./.venv/bin/s1tui
 ```
 
-已有 `.venv` 并安装过依赖时，只需运行最后一行；等价的写法分别是 `.\.venv\Scripts\python.exe -m s1tui` 和 `./.venv/bin/python -m s1tui`。也可以先激活虚拟环境：Windows 执行 `.\.venv\Scripts\Activate.ps1`，macOS / Linux 执行 `source .venv/bin/activate`，然后运行 `python -m s1tui` 或 `stage1st-forum-tui`。旧命令 `s1-forum-tui` 和 `s1tui` 仍可使用。
-
-这里用 `python` / `python3` 而非 `py`：部分环境（含通过 uv 或独立安装器装的 Python）没有 `py` 启动器，`py -m venv` 会直接报「找不到命令」。macOS 自带的 `/usr/bin/python3` 通常是 3.9，低于要求；请改用 3.10+ 的解释器创建虚拟环境，例如 `python3.12 -m venv .venv`（Homebrew）或 `uv venv --python 3.11 .venv`。若 `python` / `python3` 也不在 PATH 上，换成解释器的完整路径即可。同理，未激活虚拟环境时用系统 Python 跑 `python -m s1tui` 会因版本过低或缺少依赖报错——务必指向 `.venv` 里的解释器。
+安装完成后，日常启动只需运行对应平台的最后一行。也可以通过虚拟环境的 Python 运行：Windows 用 `.\.venv\Scripts\python.exe -m s1tui`，macOS / Linux 用 `./.venv/bin/python -m s1tui`。旧命令 `s1-forum-tui` 和 `s1tui` 仍可使用。
 
 TUI 需要一个真正的终端窗口（Windows Terminal、VS Code 集成终端均可），在纯重定向输出的环境里启动没有意义。
 
@@ -65,20 +63,30 @@ TUI 需要一个真正的终端窗口（Windows Terminal、VS Code 集成终端�
 
 ## 常见问题
 
+**`uv` 提示找不到命令**
+
+按 [uv 安装说明](https://docs.astral.sh/uv/getting-started/installation/)安装后，重新打开终端并运行 `uv --version` 确认命令可用。
+
+**已有 `.venv`，但虚拟环境的 Python 版本不符合要求**
+
+项目需要 Python 3.10 或更新版本。若现有 `.venv` 是用较旧版本创建的，先保存其中需要保留的自定义内容，再在项目根目录用 `uv venv --python 3.11 --clear .venv` 重建环境，并重新执行上方对应平台的第二条命令安装依赖。`--clear` 会清空原虚拟环境。
+
 **启动时报 `ImportError: cannot import name '_imaging' from 'PIL'`**
 
-`.venv` 的 `site-packages` 里混入了别的 Python 版本编译的 Pillow（扩展名形如 `_imaging.cp311-win_amd64.pyd`，与当前解释器版本不符）。按当前解释器重装一次即可：
+Pillow 的已安装文件可能与当前虚拟环境不匹配。在项目根目录重新安装 Pillow：
+
+Windows（PowerShell）：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --force-reinstall --no-cache-dir "Pillow>=10.0"
+uv pip install --python .venv\Scripts\python.exe --reinstall --no-cache "Pillow>=10.0"
 ```
 
-安装完成后 `.venv\Lib\site-packages\PIL\` 下的 `.pyd` 应带有与解释器一致的版本标记（例如 3.13 对应 `cp313`）。
+macOS / Linux（bash / zsh）：
 
-**`py` 或 `python` 提示找不到命令**
-
-`py` 启动器并非所有环境都有；`python` 也可能不在 PATH 上。先在终端执行 `python -V` 确认版本不低于 3.10，找不到就改用解释器的完整路径。
+```bash
+uv pip install --python .venv/bin/python --reinstall --no-cache "Pillow>=10.0"
+```
 
 **`ModuleNotFoundError: No module named 'textual'`（或 httpx、PIL 等）**
 
-用系统 Python 跑了程序，而不是 `.venv` 里的。改用 `.\.venv\Scripts\python.exe -m s1tui`，或先激活虚拟环境。
+在项目根目录重新执行上方对应平台的第二条命令，确认依赖已安装到项目的 `.venv`。启动时使用 `.venv` 中的 `s1tui` 或 Python 路径。
