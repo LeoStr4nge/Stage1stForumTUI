@@ -10,12 +10,16 @@ Stage1st 论坛的非官方终端浏览器，基于 Python + Textual。支持浏
 
 ## 运行
 
-需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)。在项目根目录执行以下命令；uv 会选用 Python 3.11 创建 `.venv`，并把本项目及依赖安装到这个虚拟环境。无需激活环境。
+需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)。在项目根目录执行以下命令；uv 会创建 `.venv`，并把本项目及依赖安装到这个虚拟环境。无需激活环境。
+
+**Python 版本要求：3.10 或更新（无上限）。** `pyproject.toml` 中为 `requires-python = ">=3.10"`，3.10 至 3.14 均已验证可安装并正常启动。所以不必为了本项目另外安装某个特定版本：把下面命令里的 `3.12` 换成你机器上已有的任意 3.10+ 版本即可。不确定装了什么就运行 `uv python list` 查看已安装的解释器；也可以直接省略 `--python` 参数，让 uv 自己挑一个满足要求的版本。
+
+若指定的版本本机没有，uv 会自行下载一个解释器。不想让它下载就加上 `--no-python-downloads`（例如 `uv venv --python 3.12 --no-python-downloads .venv`），此时版本不存在会直接报错，据此改用已有的版本即可。若本机只有 3.9 及更早版本，同样会报错，需要先装一个 3.10+ 的 Python。
 
 Windows（PowerShell）：
 
 ```powershell
-uv venv --python 3.11 .venv
+uv venv --python 3.12 .venv
 uv pip install --python .venv\Scripts\python.exe -e .
 .\.venv\Scripts\s1tui.exe
 ```
@@ -23,7 +27,7 @@ uv pip install --python .venv\Scripts\python.exe -e .
 macOS / Linux（bash / zsh）：
 
 ```bash
-uv venv --python 3.11 .venv
+uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e .
 ./.venv/bin/s1tui
 ```
@@ -69,7 +73,7 @@ TUI 需要一个真正的终端窗口（Windows Terminal、VS Code 集成终端�
 
 **已有 `.venv`，但虚拟环境的 Python 版本不符合要求**
 
-项目需要 Python 3.10 或更新版本。若现有 `.venv` 是用较旧版本创建的，先保存其中需要保留的自定义内容，再在项目根目录用 `uv venv --python 3.11 --clear .venv` 重建环境，并重新执行上方对应平台的第二条命令安装依赖。`--clear` 会清空原虚拟环境。
+项目需要 Python 3.10 或更新版本。先确认现有 `.venv` 用的是哪个版本：`.venv/bin/python -V`（Windows 为 `.venv\Scripts\python.exe -V`）。若低于 3.10，先保存其中需要保留的自定义内容，再在项目根目录用上方的 `uv venv --python <版本> --clear .venv` 重建环境（`<版本>` 填你机器上已有的 3.10+ 版本，例如 `3.12`；也可省略 `--python` 让 uv 自行选择），然后重新执行对应平台的第二条命令安装依赖。`--clear` 会清空原虚拟环境。
 
 **启动时报 `ImportError: cannot import name '_imaging' from 'PIL'`**
 
